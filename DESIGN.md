@@ -23,22 +23,39 @@
 
 ### 4.1 功能需求 (Functional Requirements)
 
-**角色：管理员 (Admin)**
-1.  **批次管理**：上传包含 AI 预测结果的 JSON 文件，生成待分发批次。
-2.  **任务分发**：将批次中的问题分配给指定的普通用户（或用户组）。
-3.  **全局监控**：查看全局仪表盘，掌握整体进度和质量。
-4.  **数据导出**：导出经过人工校验的高质量数据（CSV/JSON），用于模型迭代。
+**角色：管理员 (Admin / System Administrator)**
+*拥有系统最高权限，承担“超级管理员”职责。*
+1.  **用户权限管理**：
+    -   查看所有注册用户列表。
+    -   **处理权限申请**：查看指定给自己的权限申请，或主动审批其他待审核用户。
+    -   **审批新用户**：将注册后处于 `GUEST` 状态的用户，分配为 `USER`（普通操作员）或 `ADMIN`（管理员）。
+    -   **权限回收**：禁用违规账号或降级权限。
+2.  **批次管理**：上传包含 AI 预测结果的 JSON 文件，生成待分发批次。
+3.  **任务分发**：将批次中的问题分配给指定的普通用户（或用户组）。
+4.  **全局监控**：查看全局仪表盘，掌握整体进度和质量。
+5.  **数据导出**：导出经过人工校验的高质量数据（CSV/JSON），用于模型迭代。
 
 **角色：普通用户 (User)**
 1.  **任务列表**：查看分配给自己的校验任务，包含批次信息。
 2.  **人工校验**：针对具体问题，查看 AI 预测类别及**所属聚类总结**，交互式选择“准确”或“不准确”（可选修正类别及理由）。
 3.  **进度查看**：查看当前分类任务下的剩余问题数。
-4.  **全局监控**：有权查看全局仪表盘，了解整体项目进展与模型表现。
+4.  **个人工作台**：查看个人待办任务统计、最近任务快捷入口。
 
-**全局仪表盘 (Dashboard)**
-1.  **核心指标**：AI 预测总数、批次总数、AI 准确率、人工矫正进度（已校验/总量）、待分发批次数量。
-2.  **错误分析**：展示 AI 预测错误的 Top 5 类别（即错误率最高的预测类别）。
-3.  **数据分布**：展示所有类别的词云图。
+**角色：游客 (Guest/Pending)**
+1.  **注册/登录**：通过统一入口注册账号或登录。
+2.  **申请审批**：登录后在提示页可**选择指定的管理员**提交权限申请。
+3.  **权限申请页**：提交申请后显示“已通知管理员 [Name] 审核中”，无法访问业务功能。
+
+**仪表盘 (Dashboard)**
+1.  **管理员视图 (Global)**：
+    -   核心指标：AI 预测总数、批次总数、AI 准确率、人工矫正进度（已校验/总量）、待分发批次数量、**待审批用户数**。
+    -   错误分析：展示 AI 预测错误的 Top 5 类别（即错误率最高的预测类别）。
+    -   数据分布：展示所有类别的词云图。
+2.  **普通用户视图 (Personal)**：
+    -   我的待办任务数。
+    -   最近处理的任务列表（带进度条）。
+3.  **游客视图 (Guest)**：
+    -   仅显示静态提示：“您的账号正在审核中，请联系管理员开通权限。”
 
 ### 4.2 非功能需求 (Non-functional Requirements)
 - **响应速度**：校验操作（提交结果）延迟应 < 200ms。
@@ -50,7 +67,7 @@
 
 ### 5.1 系统组件
 系统采用经典的前后端分离架构：
-- **Frontend (Web SPA)**: 基于 React/Vue 构建，提供 Admin 和 User 界面及可视化仪表盘。
+- **Frontend (Web SPA)**: 基于 React/Vue 构建。**系统根据登录用户的角色（Admin/User）自动路由至相应的界面（管理后台或个人工作台），普通用户无法访问管理员功能。**
 - **Backend Service**: 提供 RESTful API，处理业务逻辑、权限控制和数据聚合。
 - **Database**: 关系型数据库 (PostgreSQL/MySQL) 存储用户、批次、问题数据及校验结果。
 - **Object Storage (Optional)**: 存储原始上传的 JSON 文件备份（可视需求简化直接存 DB）。
@@ -84,102 +101,202 @@
 ### 6.2 模块交互 (Module Interaction)
 
 #### 用例图 (Use Case Diagram)
-```ascii
-+-----------------------+
-|  AI Classification    |
-|  Flywheel System      |
-+-----------------------+
-|                       |
-|   +---------------+   |
-|   |  Upload Batch |<-------+
-|   +---------------+   |    |
-|                       |  Admin
-|   +---------------+   |    |
-|   | Dispatch Task |<-------+
-|   +---------------+   |    |
-|                       |    |
-|   +---------------+   |    |
-|   | View Dashboard|<-------+
-|   +---------------+   |    |
-|                       |  User
-|                       |    |
-|   +---------------+   |    |
-|   |   View Task   |<-------+
-|   +---------------+   |    |
-|                       |    |
-|   +---------------+   |    |
-|   |  Verify Issue |<-------+
-|   +---------------+   |
-|                       |
-+-----------------------+
+```plantuml
+@startuml
+left to right direction
+skinparam packageStyle rectangle
+
+actor "Guest (游客/新用户)" as guest
+actor "User (普通用户)" as user
+actor "Admin (管理员)" as admin
+
+package "AI 数据飞轮系统" {
+  
+  usecase "统一登录" as UC1
+  usecase "退出登录" as UC_Logout
+
+  package "权限管理" {
+    usecase "查看权限审核提示页" as UC_GuestPage
+    usecase "提交权限申请" as UC_Apply
+    usecase "选择审批管理员" as UC_SelectAdmin
+    usecase "审批用户申请" as UC_Approve
+    usecase "用户管理列表" as UC_UserList
+  }
+
+  package "数据飞轮业务" {
+    usecase "查看全局仪表盘" as UC_GlobalDash
+    usecase "查看个人工作台" as UC_UserDash
+    
+    usecase "上传批次数据" as UC_Upload
+    usecase "任务分发" as UC_Dispatch
+    usecase "数据导出 (Ground Truth)" as UC_Export
+    
+    usecase "查看我的任务" as UC_MyTasks
+    usecase "执行人工校验" as UC_Verify
+    usecase "标记为准确" as UC_Confirm
+    usecase "提交人工纠错" as UC_Correct
+  }
+}
+
+' Guest 流程
+guest --> UC1
+guest --> UC_GuestPage
+guest --> UC_Apply
+UC_Apply ..> UC_SelectAdmin : <<include>>
+UC_GuestPage ..> UC_Logout : <<include>>
+
+' User 流程
+user --> UC1
+user --> UC_UserDash
+user --> UC_MyTasks
+user --> UC_Verify
+UC_Verify <|-- UC_Confirm
+UC_Verify <|-- UC_Correct
+
+' Admin 流程
+admin --> UC1
+admin --> UC_GlobalDash
+admin --> UC_UserList
+admin --> UC_Approve
+admin --> UC_Upload
+admin --> UC_Dispatch
+admin --> UC_Export
+
+' 业务关联
+UC_Apply ..> UC_Approve : 产生待办事项
+UC_Dispatch ..> UC_MyTasks : 产生任务
+
+@enduml
 ```
 
 #### 前端界面设计 (UI Wireframes)
 
-**1. 我的矫正任务 (My Verification Tasks)**
-展示一个分组表格，以**聚类组 (Cluster Group)** 为维度，展开后显示组内具体问题。
+**1. 统一登录页 (Unified Login)**
+系统提供唯一的登录入口，包含用户名与密码输入框。
+*   **交互流程**：
+    1.  用户输入账号密码点击登录。
+    2.  前端调用 `POST /api/auth/login`。
+    3.  后端验证通过后返回 `token` 及 `role`。
+    4.  前端根据 `role` 自动路由：
+        *   `role='ADMIN'` -> 跳转至管理员仪表盘 (Admin Dashboard)。
+        *   `role='USER'` -> 跳转至个人工作台 (User Workbench)。
+        *   `role='GUEST'` -> 跳转至“权限审核中”提示页 (Guest Page)。
+
+**2. 游客提示页 (Guest Landing Page)**
+登录后若检测到角色为 `GUEST`，不加载标准 Layout，直接渲染全屏提示组件。
+*   **视觉元素**：居中的大幅锁定图标 (Lock Icon)、醒目的状态标题（如“权限审核中”）。
+*   **权限申请交互**：
+    *   提供一个下拉框 **“选择审批管理员”**（列出所有 Admin）。
+    *   提供 **“提交申请”** 按钮。
+    *   提交后状态文案变更为：“已向管理员 [Name] 发送申请，请耐心等待。”
+*   **其他交互**：提供 `Logout` 按钮，防止未授权用户误入内部路由。
+
+**3. 我的矫正任务 (My Verification Tasks)**
+展示一个分组表格，以**SPDT + IPMT + 聚类类别**为维度进行合并展示 (RowSpan)，直观呈现同一类问题的聚合情况。
 
 ```ascii
-+------------------------------------------------------------------------------------------------------------------+
-| 我的矫正任务                                                                                                     |
-+------------------------------------------------------------------------------------------------------------------+
-| [SPDT] | [IPMT] | [聚类类别]     | [聚类总结]           | [问题数]| [操作区 (Action)]                              |
-+------------------------------------------------------------------------------------------------------------------+
-| 分组A  | XX     | 组网协议异常   | 网络中断，无法连接...| 2       |                                                  |
-|        |        |                |                      |         | +----------------------------------------------+ |
-|        |        |                |                      |         | | PROD | DETAILS     | ISSUE_NO | TYPE       | |
-|        |        |                |                      |         | +----------------------------------------------+ |
-|        |        |                |                      |         | | P1   | Error 0x88F | NO-001   | 协议异常   | |
-|        |        |                |                      |         | |      | [AI准确] [我要纠错]                 | |
-|        |        |                |                      |         | +----------------------------------------------+ |
-|        |        |                |                      |         | | P2   | Res alloc.. | NO-002   | 协议异常   | |
-|        |        |                |                      |         | |      | [AI准确] [我要纠错]                 | |
-|        |        |                |                      |         | +----------------------------------------------+ |
-+------------------------------------------------------------------------------------------------------------------+
-| 分组B  | YY     | 数据同步问题   | 传输缓慢...          | 1       | ...                                            |
-+------------------------------------------------------------------------------------------------------------------+
++---------------------------------------------------------------------------------------------------------------------------------------+
+| 任务：issue_logs_2023.json                                                               [筛选: 全部/待办] [返回列表]                 |
++---------------------------------------------------------------------------------------------------------------------------------------+
+| SPDT | IPMT | 聚类类别      | 聚类总结             | 问题数 | 用户矫正类别          | 矫正说明 | PROD_EN.. | RESOLUTION.. | ISSUE.. |
++---------------------------------------------------------------------------------------------------------------------------------------+
+|      |      | 硬件问题      | 检测到物理设备...    |        | [ 准确 ] [ 纠错 ]     |          | DSP9800   | Replaced..   | Err..   |
+| 分组A| XX   |  >            |                      |   2    | --------------------- | -------- | --------- | ------------ | ------- |
+|      |      | 内存溢出      |                      |        | [AI准确]              |          | DSP9811   | Res alloc..  | Fail..  |
++---------------------------------------------------------------------------------------------------------------------------------------+
+|      |      | 软件问题      | 空指针异常...        |        | [ 人工修正 ]          | 代码问题 | WebSvr    | Patch...     | Null..  |
+| 分组B| YY   |  >            |                      |   1    | 软件 > 代码异常       |          |           |              |         |
+|      |      | 代码异常      |                      |        | [ 修改 ]              |          |           |              |         |
++---------------------------------------------------------------------------------------------------------------------------------------+
 ```
 *交互说明：*
-*   每行代表一个聚类组，包含 SPDT, IPMT, 类别, 总结等元信息。
-*   右侧操作区默认展开（或点击展开）显示该组下的所有问题。
-*   每个问题下方提供两个快速操作按钮：
-    *   **[AI准确]**：点击后标记为 Correct，状态变更为 OK。
-    *   **[我要纠错]**：点击后弹出对话框或下拉输入框，填写 `humanLabel` (纠正类别) 和 `humanReasoning` (纠正说明)。
+*   **表格布局**：左侧元数据列（SPDT, IPMT, 类别, 总结）针对同一组问题进行合并（RowSpan），减少冗余信息。
+*   **操作区**：
+    *   **[准确]**：点击后状态变更为 `Verified`，显示绿色“AI准确”标记。
+    *   **[纠错]**：点击弹出对话框，回显 AI 预测值，用户可修改为真实类别（大类/子类）并填写理由。提交后显示黄色“人工修正”标记及修正后的类别。
 
 #### 校验任务时序图 (Sequence Diagram: Verification Task)
 
-```ascii
-Admin         Backend Service          Database           User
-  |                  |                    |                |
-  | 1. Upload JSON   |                    |                |
-  +----------------->|                    |                |
-  |                  | 2. Parse & Save    |                |
-  |                  +------------------->|                |
-  |                  |                    |                |
-  | 3. Dispatch Task |                    |                |
-  +----------------->| 4. Update Assignee |                |
-  |                  +------------------->|                |
-  |                  |                    |                |
-  |                  |                    | 5. Get Task    |
-  |                  |<------------------------------------+
-  |                  | 6. Return Task List|                |
-  |                  +------------------------------------>|
-  |                  |                    |                |
-  |                  |                    | 7. Submit Verify
-  |                  |<------------------------------------+
-  |                  | 8. Save Result     |                |
-  |                  +------------------->|                |
-  |                  | 9. Update Stats    |                |
-  |                  +--+                 |                |
-  |                  |  | (Async)         |                |
-  |                  +<-+                 |                |
-  |                  |                    |                |
+```plantuml
+@startuml
+autonumber
+
+actor "Admin" as admin
+actor "User" as user
+participant "Web Frontend" as web
+participant "Backend Service" as api
+database "Database" as db
+
+== 1. 数据上传与解析 (Admin) ==
+admin -> web: 上传 JSON 文件
+web -> api: POST /admin/batches (Multipart)
+activate api
+api -> api: 解析 JSON 内容
+api -> db: INSERT analysis_batches (Status=UPLOADED)
+api -> db: INSERT raw_problems (Status=PENDING)
+api --> web: 返回 BatchID & 统计信息
+deactivate api
+web --> admin: 显示上传成功
+
+== 2. 任务分发 (Admin) ==
+admin -> web: 选择批次 & 指派用户 (User A)
+web -> api: POST /admin/batches/{id}/assign
+activate api
+api -> db: UPDATE analysis_batches SET assignee=UserA
+api -> db: UPDATE raw_problems SET operator_id=UserA
+api --> web: 分发成功
+deactivate api
+
+== 3. 执行校验 (User) ==
+user -> web: 查看“我的任务”
+web -> api: GET /tasks?status=PENDING
+activate api
+api -> db: SELECT * FROM raw_problems WHERE operator=UserA
+db --> api: 返回任务列表
+api --> web: JSON Data
+deactivate api
+web --> user: 渲染任务表格
+
+opt 标记为准确 (Verify)
+    user -> web: 点击 [准确]
+    web -> api: POST /tasks/{id}/verify {status: VERIFIED}
+    activate api
+    api -> db: UPDATE raw_problems SET status=VERIFIED
+    api --> web: OK
+    deactivate api
+    web --> user: 更新 UI 为绿色对勾
+end
+
+opt 提交纠错 (Correction)
+    user -> web: 点击 [纠错] -> 填写表单
+    web -> api: POST /tasks/{id}/verify {status: CORRECTED, ...}
+    activate api
+    api -> db: UPDATE raw_problems SET status=CORRECTED, human_label=...
+    api --> web: OK
+    deactivate api
+    web --> user: 更新 UI 为黄色修正标记
+end
+
+@enduml
 ```
 
 ### 6.3 核心流程 (Core Processes)
-1.  **上传流程**：管理员上传 JSON -> 后端解析 -> 存入 `analysis_batches` 表 -> 解析问题存入 `raw_problems` 表（状态：待分发）。
-2.  **分发流程**：管理员选择批次 -> 选择用户 -> 后端更新 `analysis_batches` 表的 `assigned_user_id` -> 关联用户可查看批次下的 `raw_problems`。
-3.  **校验流程**：用户获取任务 -> 提交校验结果 (IsCorrect) -> 后端更新 `raw_problems` 状态为 `CORRECTED` -> 触发统计更新（或异步计算）。
+1.  **统一登录与权限路由**：
+    *   用户在登录页输入账号密码。
+    *   后端验证通过，返回 Token 及 `role` (`ADMIN`, `USER`, `GUEST`)。
+    *   前端根据 `role` 跳转：
+        *   `ADMIN` -> 管理员仪表盘。
+        *   `USER` -> 个人工作台。
+        *   `GUEST` -> 权限审核申请页。
+2.  **用户注册与授权**：
+    *   新用户注册后，默认 `role=GUEST`，`target_approver_id=NULL`。
+    *   **主动申请**：用户在 Guest 页面调用 `GET /admins` 获取管理员列表，选择一人调用 `POST /access-request`。后端更新该用户的 `target_approver_id`。
+    *   **状态保持**：若 Guest 用户重新登录，前端检查 `target_approver_id`，若不为空则显示“已提交申请”状态。
+    *   **审批**：目标管理员在后台看到“待办审批”通知，将该用户 `role` 修改为 `USER`（同时清空 `target_approver_id`）。
+    *   用户重新登录获得权限。
+3.  **上传流程**：管理员上传 JSON -> 后端解析 -> 存入 `analysis_batches` 表 -> 解析问题存入 `raw_problems` 表（状态：待分发）。
+4.  **分发流程**：管理员选择批次 -> 选择用户 -> 后端更新 `analysis_batches` 表的 `assigned_user_id` -> 关联用户可查看批次下的 `raw_problems`。
+5.  **校验流程**：用户获取任务 -> 提交校验结果 (IsCorrect) -> 后端更新 `raw_problems` 状态为 `CORRECTED` -> 触发统计更新（或异步计算）。
 
 ## 7. 数据库设计 (Database Design)
 
@@ -196,8 +313,13 @@ Admin         Backend Service          Database           User
 |---|---|---|
 | id | INT | PK |
 | username | VARCHAR | 用户名 (UNIQUE) |
-| role | ENUM | 'ADMIN', 'USER' |
+| role | ENUM | 'ADMIN', 'USER', 'GUEST' |
+| status | ENUM | 'ACTIVE', 'DISABLED' |
+| target_approver_id | INT | FK -> users.id (申请的审批人ID，NULL表示未申请或已通过) |
 | password_hash | VARCHAR | 密码哈希 |
+| created_at | DATETIME | 注册时间 |
+
+*说明：新注册用户默认为 `role='GUEST'`, `status='ACTIVE'`。只有 `role` 被管理员修改为 `USER` 或 `ADMIN` 后才能进入业务系统。*
 
 **2. analysis_batches (批次表)**
 | Field | Type | Description |
@@ -217,7 +339,8 @@ Admin         Backend Service          Database           User
 | batch_id | BIGINT | FK -> analysis_batches.id (关联批次) |
 | spdt | VARCHAR | SPDT字段 |
 | ipmt | VARCHAR | IPMT字段 |
-| ai_cluster_category | VARCHAR | AI 聚类类别 |
+| category_large | VARCHAR | AI 聚类大类 |
+| category_sub | VARCHAR | AI 聚类子类 |
 | ai_cluster_summary | TEXT | AI 聚类总结 |
 | problem_count | INT | 该组包含的问题数 |
 
@@ -233,8 +356,9 @@ Admin         Backend Service          Database           User
 | issue_no | VARCHAR |  |
 | issue_type | VARCHAR |  |
 
-| correction_status | ENUM | 'PENDING', 'CORRECTED', 'SKIPPED' (矫正状态) |
-| human_label | VARCHAR | 用户输入的矫正类别 |
+| correction_status | ENUM | 'PENDING', 'CORRECTED', 'VERIFIED', 'SKIPPED' |
+| human_category_large | VARCHAR | 用户输入的矫正大类 |
+| human_category_sub | VARCHAR | 用户输入的矫正子类 |
 | human_reasoning | TEXT | 用户输入的矫正理由 |
 | operator_id | VARCHAR | FK -> users.username (操作人工号) |
 | updated_at | DATETIME | 更新时间 |
@@ -264,7 +388,36 @@ Admin         Backend Service          Database           User
 
 ## 9. API 设计 (API Spec)
 
-### 9.1 批次上传 (Admin)
+### 9.1 身份认证 (Auth)
+- **POST** `/api/auth/login`
+- **Request**: `{ "username": "...", "password": "..." }`
+- **Response**:
+```json
+{
+  "token": "eyJhbGci...",
+  "user": {
+    "id": 1,
+    "username": "admin",
+    "role": "ADMIN" // 前端据此路由至 /admin/dashboard
+  }
+}
+```
+
+### 9.2 用户权限管理 (Admin Only)
+*管理员通过此接口行使“超级管理员”职责，对新注册的 Guest 用户进行授权。*
+- **GET** `/api/common/admins` (Public/Guest)
+    - **Description**: 获取管理员列表（ID, Username），供 Guest 选择审批人。
+- **POST** `/api/user/access-request` (Guest)
+    - **Request**: `{ "target_admin_id": 1 }`
+    - **Description**: 提交权限申请。
+- **GET** `/api/admin/users`
+    - **Query**: `?status=ACTIVE&role=GUEST` (筛选待审核用户)
+    - **Response**: 用户列表（包含 `target_approver_id` 以便前端高亮显示指派给当前管理员的申请）。
+- **PATCH** `/api/admin/users/{userId}/role`
+    - **Request**: `{ "role": "USER" }` (授权为普通用户)
+    - **Description**: 将用户从游客升级为正式用户，使其能进入工作台。
+
+### 9.3 批次上传 (Admin)
 - **POST** `/api/admin/batches`
 - **Request**: Multipart file (JSON)
 - **Response**:
@@ -295,7 +448,8 @@ Admin         Backend Service          Database           User
   "data": [
     {
       "groupId": 101,
-      "aiCategory": "组网协议异常",
+      "categoryLarge": "网络问题",
+      "categorySub": "组网协议异常",
       "aiSummary": "用户反馈连接中断...",
       "spdt": "分组A",
       "ipmt": "XX",
@@ -305,16 +459,18 @@ Admin         Backend Service          Database           User
           "issueId": 1001,
           "prodEnName": "DSP9800",
           "issueDetails": "Error 0x88F...",
-          "correctionStatus": "OK",
-          "humanLabel": null,
+          "correctionStatus": "VERIFIED",
+          "humanCategoryLarge": null,
+          "humanCategorySub": null,
           "humanReasoning": null
         },
         {
           "issueId": 1002,
           "prodEnName": "DSP9811",
           "issueDetails": "Resource alloc failed...",
-          "correctionStatus": "EDIT",
-          "humanLabel": "硬件故障",
+          "correctionStatus": "CORRECTED",
+          "humanCategoryLarge": "硬件问题",
+          "humanCategorySub": "内存溢出",
           "humanReasoning": "日志显示物理损坏"
         }
       ]
@@ -328,34 +484,48 @@ Admin         Backend Service          Database           User
 - **Request**:
 ```json
 {
-  "correction_status": "CORRECTED", // 或 SKIPPED
-  "human_label": "Technical_Support", // 若 AI 预测准确则可不填或填原值
+  "correction_status": "CORRECTED", // 或 VERIFIED
+  "human_category_large": "软件问题", 
+  "human_category_sub": "代码异常",
   "human_reasoning": "The issue mentions database connection..." // 可选
 }
 ```
 
-### 9.5 仪表盘统计 (Global)
-- **GET** `/api/dashboard/stats`
+### 9.6 仪表盘统计 (Dashboard)
+#### 9.6.1 全局统计 (Admin)
+- **GET** `/api/admin/dashboard/stats`
 - **Response**:
 ```json
 {
   "total_predicted": 10000,
-  "total_batches": 20,
-  "ai_accuracy": 0.85, 
-  "progress_percentage": 0.60,
-  "pending_batches_count": 2,
+  "accuracy": 0.85, 
+  "pending_batches": 2,
+  "pending_user_requests": 3, // 新增：待我审批的用户数
+  "correction_progress": 0.60,
   "top_errors": [
-    {"category": "Billing", "error_count": 150},
-    {"category": "Login", "error_count": 120}
+    {"category": "Billing", "value": 150},
+    {"category": "Login", "value": 120}
   ],
   "word_cloud": [
-    {"text": "Billing", "value": 500},
-    {"text": "Account", "value": 300}
+    {"name": "Billing", "value": 500},
+    {"name": "Account", "value": 300}
   ]
 }
 ```
 
-### 9.6 数据导出 (Admin)
+#### 9.6.2 个人统计 (User)
+- **GET** `/api/user/dashboard/stats`
+- **Response**:
+```json
+{
+  "my_pending_tasks_count": 15,
+  "recent_tasks": [
+    { "batch_id": 101, "file_name": "log_01.json", "progress": 0.8 }
+  ]
+}
+```
+
+### 9.7 数据导出 (Admin)
 - **GET** `/api/admin/batches/{batchId}/export`
 - **Response**: CSV/JSON File Download
 
