@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 @Service
@@ -21,7 +22,6 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
     @Override
     public Map<String, Object> login(LoginRequest request) {
-        // Simple implementation: Find user by username
         QueryWrapper<User> queryWrapper = new QueryWrapper<>();
         queryWrapper.eq("username", request.getUsername());
         User user = this.getOne(queryWrapper);
@@ -30,15 +30,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             throw new RuntimeException("User not found");
         }
 
-        // In real app, use BCrypt or similar. Here we just compare strings for "simple version"
-        // Or if the design doc implies hashing, we should assume the input is hashed or we hash it here.
-        // For this demo, let's assume plain text check for simplicity as requested.
         if (!request.getPassword().equals(user.getPasswordHash())) {
             throw new RuntimeException("Invalid password");
-        }
-
-        if ("DISABLED".equals(user.getStatus())) {
-            throw new RuntimeException("Account is disabled");
         }
 
         String token = jwtUtil.generateToken(user.getId(), user.getUsername(), user.getRole());
@@ -49,5 +42,38 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         
         return data;
     }
-}
 
+    @Override
+    public List<User> getAdmins() {
+        QueryWrapper<User> qw = new QueryWrapper<>();
+        qw.eq("role", "ADMIN");
+        return this.list(qw);
+    }
+
+    @Override
+    public void approveUser(Long userId) {
+        User user = this.getById(userId);
+        if (user == null) throw new RuntimeException("User not found");
+        
+        user.setRole("USER"); // Default to USER role after approval
+        this.updateById(user);
+    }
+
+    @Override
+    public void revokeUser(Long userId) {
+        User user = this.getById(userId);
+        if (user == null) throw new RuntimeException("User not found");
+
+        user.setRole("GUEST");
+        this.updateById(user);
+    }
+
+    @Override
+    public List<User> listUsers(String role) {
+        QueryWrapper<User> qw = new QueryWrapper<>();
+        if (role != null && !role.isEmpty()) {
+            qw.eq("role", role);
+        }
+        return this.list(qw);
+    }
+}

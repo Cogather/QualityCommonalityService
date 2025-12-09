@@ -5,8 +5,6 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
-import java.util.Date;
-
 @Data
 @TableName("users")
 public class User {
@@ -18,12 +16,6 @@ public class User {
     // Storing as String for simplicity, or could use Enum
     private String role; // ADMIN, USER, GUEST
     
-    private String status; // ACTIVE, DISABLED
-    
-    private Long targetApproverId;
-    
     private String passwordHash; // Simplified as plain password for this demo if needed, but field name suggests hash
-    
-    private Date createdAt;
 }
 

@@ -2,10 +2,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   `id` BIGINT AUTO_INCREMENT COMMENT '主键ID',
   `username` VARCHAR(50) NOT NULL COMMENT '用户名',
   `role` VARCHAR(20) DEFAULT 'GUEST' COMMENT '角色: ADMIN, USER, GUEST',
-  `status` VARCHAR(20) DEFAULT 'ACTIVE' COMMENT '状态: ACTIVE, DISABLED',
-  `target_approver_id` BIGINT DEFAULT NULL COMMENT '申请的审批人ID',
   `password_hash` VARCHAR(255) DEFAULT NULL COMMENT '密码哈希',
-  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '注册时间',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_username` (`username`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户表';
@@ -47,8 +44,20 @@ CREATE TABLE IF NOT EXISTS `issues` (
   KEY `idx_batch_id` (`batch_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='具体问题项表';
 
+CREATE TABLE IF NOT EXISTS `access_requests` (
+  `id` BIGINT AUTO_INCREMENT COMMENT '主键ID',
+  `user_id` BIGINT NOT NULL COMMENT '申请人ID',
+  `admin_id` BIGINT NOT NULL COMMENT '审批管理员ID',
+  `status` VARCHAR(20) DEFAULT 'PENDING' COMMENT '状态: PENDING, APPROVED, REJECTED',
+  `reason` VARCHAR(255) DEFAULT NULL COMMENT '申请备注',
+  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '申请时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_admin_id` (`admin_id`),
+  KEY `idx_user_id` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='权限申请表';
+
 -- 初始化一些测试数据
-INSERT IGNORE INTO `users` (`username`, `role`, `status`, `password_hash`, `created_at`) VALUES 
-('admin', 'ADMIN', 'ACTIVE', '123456', NOW()),
-('user1', 'USER', 'ACTIVE', '123456', NOW()),
-('user2', 'USER', 'ACTIVE', '123456', NOW());
+INSERT IGNORE INTO `users` (`username`, `role`, `password_hash`) VALUES 
+('admin', 'ADMIN', '123456'),
+('user1', 'USER', '123456'),
+('user2', 'USER', '123456');
