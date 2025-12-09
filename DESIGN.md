@@ -404,7 +404,22 @@ UC_Dispatch ..> UC_MyTasks : 产生任务
 @enduml
 ```
 
-## 6. 详细设计 (Detailed Design - Data & API)
+## 6. 技术栈选型 (Technology Stack Selection)
+
+### 6.1 前端技术 (Frontend)
+- **核心框架**: Vue 3
+- **构建工具**: Vite
+- **UI 组件库**: Element Plus
+- **数据可视化**: ECharts 5
+- **状态管理**: Pinia
+- **CSS 预处理器**: Sass/Scss
+
+### 6.2 后端技术 (Backend)
+- **开发语言**: Java 8 (JDK 1.8)
+- **Web 框架**: Spring Boot 2.7.x
+- **持久层框架**: MyBatis Plus
+- **数据库**: MySQL 5.7
+- **构建工具**: Maven 3.9
 
 ## 7. 数据库设计 (Database Design)
 
