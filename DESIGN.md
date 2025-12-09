@@ -63,44 +63,280 @@
 - **数据一致性**：确保校验结果不会因并发操作而丢失或冲突。
 - **易用性**：校验界面应尽可能减少点击次数，支持快捷键。
 
-## 5. 系统架构 (Architecture Overview)
+## 5. 系统架构 (Architecture - 4+1 Views)
 
-### 5.1 系统组件
-系统采用经典的前后端分离架构：
-- **Frontend (Web SPA)**: 基于 React/Vue 构建。**系统根据登录用户的角色（Admin/User）自动路由至相应的界面（管理后台或个人工作台），普通用户无法访问管理员功能。**
-- **Backend Service**: 提供 RESTful API，处理业务逻辑、权限控制和数据聚合。
-- **Database**: 关系型数据库 (PostgreSQL/MySQL) 存储用户、批次、问题数据及校验结果。
-- **Object Storage (Optional)**: 存储原始上传的 JSON 文件备份（可视需求简化直接存 DB）。
+### 5.1 逻辑视图 (Logical View)
+*关注系统的功能逻辑与领域模型，描述系统“是什么”。*
 
-### 5.2 架构图 (Architecture Diagram)
+#### 5.1.1 架构概览
+系统采用经典的前后端分离架构，后端基于领域驱动设计 (DDD) 思想分层。
 
-```ascii
-+----------------+      +----------------+
-|   Admin Web    |      |    User Web    |
-+-------+--------+      +-------+--------+
-        |                       |
-        |   HTTPS / REST API    |
-        v                       v
-+----------------------------------------+
-|           API Gateway / LB             |
-+-------------------+--------------------+
-                    |
-          +---------v----------+
-          |  Backend Service   |
-          | (Core Logic, Auth) |
-          +----+----------+----+
-               |          |
-      +--------v--+    +--v-----------+
-      |  Database |    | File Storage |
-      | (SQL DB)  |    | (JSON Logs)  |
-      +-----------+    +--------------+
+```plantuml
+@startuml
+package "Client Layer" {
+  [Web Frontend (SPA)] as Web
+}
+
+package "Backend Service" {
+  [API Gateway / Controller] as API
+  
+  package "Business Logic" {
+    [Batch Manager] as BatchMgr
+    [Task Manager] as TaskMgr
+    [User/Auth Manager] as UserMgr
+    [Statistics Engine] as Stats
+  }
+  
+  package "Data Access" {
+    [Repository Layer] as Repo
+  }
+}
+
+Web --> API : REST / JSON
+API --> BatchMgr
+API --> TaskMgr
+API --> UserMgr
+API --> Stats
+
+BatchMgr --> Repo
+TaskMgr --> Repo
+UserMgr --> Repo
+Stats --> Repo
+@enduml
 ```
 
-## 6. 详细设计 (Detailed Design)
+#### 5.1.2 核心领域模型 (Class Diagram)
+*展示 User, Batch, Problem 等核心实体及其静态关系。*
 
-### 6.2 模块交互 (Module Interaction)
+```plantuml
+@startuml
+class User {
+  +id: Long
+  +username: String
+  +role: Role {ADMIN, USER, GUEST}
+  +targetApproverId: Long
+  +approveGuest(guestId): void
+}
 
-#### 用例图 (Use Case Diagram)
+class AnalysisBatch {
+  +id: Long
+  +batchNo: String
+  +status: BatchStatus
+  +totalCount: Integer
+  +assignTo(user): void
+}
+
+class AiClusterGroup {
+  +id: Long
+  +categoryLarge: String
+  +categorySub: String
+  +summary: String
+  +spdt: String
+  +ipmt: String
+}
+
+class RawProblem {
+  +id: Long
+  +prodName: String
+  +issueDetails: String
+  +aiClusterId: Long
+  +status: VerifyStatus {PENDING, VERIFIED, CORRECTED}
+  +humanCategoryLarge: String
+  +humanCategorySub: String
+  +verify(isCorrect, reason): void
+}
+
+User "1" -- "0..*" AnalysisBatch : assigned >
+AnalysisBatch "1" *-- "1..*" AiClusterGroup : contains >
+AiClusterGroup "1" *-- "1..*" RawProblem : aggregates >
+User "1" -- "0..*" RawProblem : verifies >
+@enduml
+```
+
+### 5.2 过程视图 (Process View)
+*关注系统的运行时行为、并发与流程交互，描述系统“怎么做”。*
+
+#### 5.2.1 核心状态流转 (State Machine)
+*描述“问题 (Problem)”对象在生命周期中的状态变化。*
+
+```plantuml
+@startuml
+skinparam state {
+  BackgroundColor White
+  BorderColor Black
+}
+
+[*] --> PENDING : Upload & Parse
+note right of PENDING : 初始状态\n等待分发/校验
+
+PENDING --> PENDING : Dispatch (Assign User)
+note right on link : 仅更新 operator_id
+
+PENDING --> VERIFIED : User Click [准确]
+VERIFIED --> PENDING : User Revert
+VERIFIED --> CORRECTED : User Edit
+
+PENDING --> CORRECTED : User Click [纠错]
+CORRECTED --> PENDING : User Revert
+CORRECTED --> VERIFIED : User Edit
+
+VERIFIED --> [*] : Export
+CORRECTED --> [*] : Export
+@enduml
+```
+
+#### 5.2.2 核心业务时序 (Sequence Diagram)
+*描述“上传 -> 分发 -> 校验”的全链路交互。*
+
+```plantuml
+@startuml
+autonumber
+
+actor "Admin" as admin
+actor "User" as user
+participant "Web Frontend" as web
+participant "Backend Service" as api
+database "Database" as db
+
+== 1. 数据上传与解析 (Admin) ==
+admin -> web: 上传 JSON 文件
+web -> api: POST /admin/batches (Multipart)
+activate api
+api -> api: 解析 JSON 内容
+api -> db: INSERT analysis_batches (Status=UPLOADED)
+api -> db: INSERT raw_problems (Status=PENDING)
+api --> web: 返回 BatchID & 统计信息
+deactivate api
+web --> admin: 显示上传成功
+
+== 2. 任务分发 (Admin) ==
+admin -> web: 选择批次 & 指派用户 (User A)
+web -> api: POST /admin/batches/{id}/assign
+activate api
+api -> db: UPDATE analysis_batches SET assignee=UserA
+api -> db: UPDATE raw_problems SET operator_id=UserA
+api --> web: 分发成功
+deactivate api
+
+== 3. 执行校验 (User) ==
+user -> web: 查看“我的任务”
+web -> api: GET /tasks?status=PENDING
+activate api
+api -> db: SELECT * FROM raw_problems WHERE operator=UserA
+db --> api: 返回任务列表
+api --> web: JSON Data
+deactivate api
+web --> user: 渲染任务表格
+
+opt 标记为准确 (Verify)
+    user -> web: 点击 [准确]
+    web -> api: POST /tasks/{id}/verify {status: VERIFIED}
+    activate api
+    api -> db: UPDATE raw_problems SET status=VERIFIED
+    api --> web: OK
+    deactivate api
+    web --> user: 更新 UI 为绿色对勾
+end
+
+opt 提交纠错 (Correction)
+    user -> web: 点击 [纠错] -> 填写表单
+    web -> api: POST /tasks/{id}/verify {status: CORRECTED, ...}
+    activate api
+    api -> db: UPDATE raw_problems SET status=CORRECTED, human_label=...
+    api --> web: OK
+    deactivate api
+    web --> user: 更新 UI 为黄色修正标记
+end
+@enduml
+```
+
+### 5.3 开发视图 (Development View)
+*关注软件模块的组织、层级划分及依赖关系，服务于开发人员。*
+
+#### 5.3.1 组件依赖 (Component Diagram)
+```plantuml
+@startuml
+package "Client Layer" {
+  [Web Frontend] as Web
+}
+
+package "Backend Service" {
+  [API Gateway / Controller] as API
+  
+  package "Business Logic Layer" {
+    [Batch Manager] as BatchMgr
+    [Task Manager] as TaskMgr
+    [User/Auth Manager] as UserMgr
+    [Statistics Engine] as Stats
+  }
+  
+  package "Data Access Layer" {
+    [Repository Interface] as Repo
+    [JPA / Mapper Implementation] as RepoImpl
+  }
+}
+
+database "MySQL / PostgreSQL" as DB
+folder "File Storage" as FS
+
+Web --> API : REST / JSON
+API --> BatchMgr
+API --> TaskMgr
+API --> UserMgr
+API --> Stats
+
+BatchMgr --> Repo
+TaskMgr --> Repo
+UserMgr --> Repo
+Stats --> Repo
+
+Repo <|.. RepoImpl : implements
+RepoImpl --> DB : SQL
+BatchMgr ..> FS : Write Logs
+@enduml
+```
+
+### 5.4 物理视图 (Physical View)
+*关注系统的部署拓扑、物理节点及网络通信。*
+
+#### 5.3.1 部署架构 (Deployment Diagram)
+```plantuml
+@startuml
+node "User Client" {
+    [Browser (SPA)]
+}
+
+node "Admin Client" {
+    [Browser (SPA)]
+}
+
+cloud "Cloud / Server Environment" {
+    node "Load Balancer (Nginx)" as LB
+    
+    node "Application Server (Docker)" {
+        [Backend Service] as App
+    }
+    
+    database "Database Server" {
+        [PostgreSQL] as DB
+    }
+    
+    folder "Object Storage" {
+        [JSON Files] as OSS
+    }
+}
+
+[Browser (SPA)] --> LB : HTTPS
+LB --> App : HTTP
+App --> DB : TCP/5432
+App --> OSS : S3 API
+@enduml
+```
+
+### 5.5 场景视图 (Scenarios / Use Case View)
+*关注最终用户与系统的交互，是架构设计的驱动力。*
+
+#### 5.4.1 用例图 (Use Case Diagram)
 ```plantuml
 @startuml
 left to right direction
@@ -165,138 +401,10 @@ admin --> UC_Export
 ' 业务关联
 UC_Apply ..> UC_Approve : 产生待办事项
 UC_Dispatch ..> UC_MyTasks : 产生任务
-
 @enduml
 ```
 
-#### 前端界面设计 (UI Wireframes)
-
-**1. 统一登录页 (Unified Login)**
-系统提供唯一的登录入口，包含用户名与密码输入框。
-*   **交互流程**：
-    1.  用户输入账号密码点击登录。
-    2.  前端调用 `POST /api/auth/login`。
-    3.  后端验证通过后返回 `token` 及 `role`。
-    4.  前端根据 `role` 自动路由：
-        *   `role='ADMIN'` -> 跳转至管理员仪表盘 (Admin Dashboard)。
-        *   `role='USER'` -> 跳转至个人工作台 (User Workbench)。
-        *   `role='GUEST'` -> 跳转至“权限审核中”提示页 (Guest Page)。
-
-**2. 游客提示页 (Guest Landing Page)**
-登录后若检测到角色为 `GUEST`，不加载标准 Layout，直接渲染全屏提示组件。
-*   **视觉元素**：居中的大幅锁定图标 (Lock Icon)、醒目的状态标题（如“权限审核中”）。
-*   **权限申请交互**：
-    *   提供一个下拉框 **“选择审批管理员”**（列出所有 Admin）。
-    *   提供 **“提交申请”** 按钮。
-    *   提交后状态文案变更为：“已向管理员 [Name] 发送申请，请耐心等待。”
-*   **其他交互**：提供 `Logout` 按钮，防止未授权用户误入内部路由。
-
-**3. 我的矫正任务 (My Verification Tasks)**
-展示一个分组表格，以**SPDT + IPMT + 聚类类别**为维度进行合并展示 (RowSpan)，直观呈现同一类问题的聚合情况。
-
-```ascii
-+---------------------------------------------------------------------------------------------------------------------------------------+
-| 任务：issue_logs_2023.json                                                               [筛选: 全部/待办] [返回列表]                 |
-+---------------------------------------------------------------------------------------------------------------------------------------+
-| SPDT | IPMT | 聚类类别      | 聚类总结             | 问题数 | 用户矫正类别          | 矫正说明 | PROD_EN.. | RESOLUTION.. | ISSUE.. |
-+---------------------------------------------------------------------------------------------------------------------------------------+
-|      |      | 硬件问题      | 检测到物理设备...    |        | [ 准确 ] [ 纠错 ]     |          | DSP9800   | Replaced..   | Err..   |
-| 分组A| XX   |  >            |                      |   2    | --------------------- | -------- | --------- | ------------ | ------- |
-|      |      | 内存溢出      |                      |        | [AI准确]              |          | DSP9811   | Res alloc..  | Fail..  |
-+---------------------------------------------------------------------------------------------------------------------------------------+
-|      |      | 软件问题      | 空指针异常...        |        | [ 人工修正 ]          | 代码问题 | WebSvr    | Patch...     | Null..  |
-| 分组B| YY   |  >            |                      |   1    | 软件 > 代码异常       |          |           |              |         |
-|      |      | 代码异常      |                      |        | [ 修改 ]              |          |           |              |         |
-+---------------------------------------------------------------------------------------------------------------------------------------+
-```
-*交互说明：*
-*   **表格布局**：左侧元数据列（SPDT, IPMT, 类别, 总结）针对同一组问题进行合并（RowSpan），减少冗余信息。
-*   **操作区**：
-    *   **[准确]**：点击后状态变更为 `Verified`，显示绿色“AI准确”标记。
-    *   **[纠错]**：点击弹出对话框，回显 AI 预测值，用户可修改为真实类别（大类/子类）并填写理由。提交后显示黄色“人工修正”标记及修正后的类别。
-
-#### 校验任务时序图 (Sequence Diagram: Verification Task)
-
-```plantuml
-@startuml
-autonumber
-
-actor "Admin" as admin
-actor "User" as user
-participant "Web Frontend" as web
-participant "Backend Service" as api
-database "Database" as db
-
-== 1. 数据上传与解析 (Admin) ==
-admin -> web: 上传 JSON 文件
-web -> api: POST /admin/batches (Multipart)
-activate api
-api -> api: 解析 JSON 内容
-api -> db: INSERT analysis_batches (Status=UPLOADED)
-api -> db: INSERT raw_problems (Status=PENDING)
-api --> web: 返回 BatchID & 统计信息
-deactivate api
-web --> admin: 显示上传成功
-
-== 2. 任务分发 (Admin) ==
-admin -> web: 选择批次 & 指派用户 (User A)
-web -> api: POST /admin/batches/{id}/assign
-activate api
-api -> db: UPDATE analysis_batches SET assignee=UserA
-api -> db: UPDATE raw_problems SET operator_id=UserA
-api --> web: 分发成功
-deactivate api
-
-== 3. 执行校验 (User) ==
-user -> web: 查看“我的任务”
-web -> api: GET /tasks?status=PENDING
-activate api
-api -> db: SELECT * FROM raw_problems WHERE operator=UserA
-db --> api: 返回任务列表
-api --> web: JSON Data
-deactivate api
-web --> user: 渲染任务表格
-
-opt 标记为准确 (Verify)
-    user -> web: 点击 [准确]
-    web -> api: POST /tasks/{id}/verify {status: VERIFIED}
-    activate api
-    api -> db: UPDATE raw_problems SET status=VERIFIED
-    api --> web: OK
-    deactivate api
-    web --> user: 更新 UI 为绿色对勾
-end
-
-opt 提交纠错 (Correction)
-    user -> web: 点击 [纠错] -> 填写表单
-    web -> api: POST /tasks/{id}/verify {status: CORRECTED, ...}
-    activate api
-    api -> db: UPDATE raw_problems SET status=CORRECTED, human_label=...
-    api --> web: OK
-    deactivate api
-    web --> user: 更新 UI 为黄色修正标记
-end
-
-@enduml
-```
-
-### 6.3 核心流程 (Core Processes)
-1.  **统一登录与权限路由**：
-    *   用户在登录页输入账号密码。
-    *   后端验证通过，返回 Token 及 `role` (`ADMIN`, `USER`, `GUEST`)。
-    *   前端根据 `role` 跳转：
-        *   `ADMIN` -> 管理员仪表盘。
-        *   `USER` -> 个人工作台。
-        *   `GUEST` -> 权限审核申请页。
-2.  **用户注册与授权**：
-    *   新用户注册后，默认 `role=GUEST`，`target_approver_id=NULL`。
-    *   **主动申请**：用户在 Guest 页面调用 `GET /admins` 获取管理员列表，选择一人调用 `POST /access-request`。后端更新该用户的 `target_approver_id`。
-    *   **状态保持**：若 Guest 用户重新登录，前端检查 `target_approver_id`，若不为空则显示“已提交申请”状态。
-    *   **审批**：目标管理员在后台看到“待办审批”通知，将该用户 `role` 修改为 `USER`（同时清空 `target_approver_id`）。
-    *   用户重新登录获得权限。
-3.  **上传流程**：管理员上传 JSON -> 后端解析 -> 存入 `analysis_batches` 表 -> 解析问题存入 `raw_problems` 表（状态：待分发）。
-4.  **分发流程**：管理员选择批次 -> 选择用户 -> 后端更新 `analysis_batches` 表的 `assigned_user_id` -> 关联用户可查看批次下的 `raw_problems`。
-5.  **校验流程**：用户获取任务 -> 提交校验结果 (IsCorrect) -> 后端更新 `raw_problems` 状态为 `CORRECTED` -> 触发统计更新（或异步计算）。
+## 6. 详细设计 (Detailed Design - Data & API)
 
 ## 7. 数据库设计 (Database Design)
 
@@ -388,146 +496,233 @@ end
 
 ## 9. API 设计 (API Spec)
 
-### 9.1 身份认证 (Auth)
+### 9.1 身份认证 (Authentication)
+*Token Based Authentication (JWT)*
+
+#### 9.1.1 用户登录
 - **POST** `/api/auth/login`
-- **Request**: `{ "username": "...", "password": "..." }`
-- **Response**:
-```json
-{
-  "token": "eyJhbGci...",
-  "user": {
-    "id": 1,
+- **Summary**: 用户名密码登录，返回 Token 及角色。
+- **Request Body**:
+  ```json
+  {
     "username": "admin",
-    "role": "ADMIN" // 前端据此路由至 /admin/dashboard
+    "password": "password123"
   }
-}
-```
+  ```
+- **Response (200 OK)**:
+  ```json
+  {
+    "token": "eyJhbGciOiJIUzI1Ni...",
+    "user": {
+      "id": 1,
+      "username": "admin",
+      "role": "ADMIN",
+      "status": "ACTIVE"
+    }
+  }
+  ```
 
-### 9.2 用户权限管理 (Admin Only)
-*管理员通过此接口行使“超级管理员”职责，对新注册的 Guest 用户进行授权。*
-- **GET** `/api/common/admins` (Public/Guest)
-    - **Description**: 获取管理员列表（ID, Username），供 Guest 选择审批人。
-- **POST** `/api/user/access-request` (Guest)
-    - **Request**: `{ "target_admin_id": 1 }`
-    - **Description**: 提交权限申请。
+#### 9.1.2 用户注册
+- **POST** `/api/auth/register`
+- **Summary**: 新用户注册，默认角色为 GUEST。
+- **Request Body**:
+  ```json
+  {
+    "username": "new_user",
+    "password": "password123"
+  }
+  ```
+- **Response (201 Created)**:
+  ```json
+  {
+    "id": 10,
+    "username": "new_user",
+    "role": "GUEST",
+    "message": "Registered successfully. Please wait for approval."
+  }
+  ```
+
+### 9.2 用户权限管理 (User Management)
+*Requires Role: ADMIN*
+
+#### 9.2.1 获取管理员列表 (Public/Guest)
+- **GET** `/api/common/admins`
+- **Summary**: 获取所有管理员的基本信息，供 Guest 选择审批人。
+- **Response**:
+  ```json
+  [
+    { "id": 1, "username": "admin_zhang" },
+    { "id": 2, "username": "manager_li" }
+  ]
+  ```
+
+#### 9.2.2 提交权限申请 (Guest)
+- **POST** `/api/user/access-request`
+- **Summary**: Guest 用户提交权限申请，指定审批人。
+- **Request Body**:
+  ```json
+  { "target_admin_id": 1 }
+  ```
+- **Response**: `{ "status": "success" }`
+
+#### 9.2.3 获取用户列表 (Admin)
 - **GET** `/api/admin/users`
-    - **Query**: `?status=ACTIVE&role=GUEST` (筛选待审核用户)
-    - **Response**: 用户列表（包含 `target_approver_id` 以便前端高亮显示指派给当前管理员的申请）。
-- **PATCH** `/api/admin/users/{userId}/role`
-    - **Request**: `{ "role": "USER" }` (授权为普通用户)
-    - **Description**: 将用户从游客升级为正式用户，使其能进入工作台。
-
-### 9.3 批次上传 (Admin)
-- **POST** `/api/admin/batches`
-- **Request**: Multipart file (JSON)
+- **Summary**: 查询用户列表，支持筛选。
+- **Query Params**:
+  - `role`: (Optional) 筛选角色 (GUEST/USER/ADMIN)
+  - `status`: (Optional) ACTIVE/DISABLED
 - **Response**:
-```json
-{
-  "batch_id": 101,
-  "total_imported": 500,
-  "status": "success"
-}
-```
-
-### 9.2 任务分发 (Admin)
-- **POST** `/api/admin/batches/{batchId}/assign`
-- **Request**:
-```json
-{
-  "user_ids": [1, 2, 3],
-  "strategy": "AVERAGE" // 平均分配
-}
-```
-
-### 9.3 获取校验任务 (User)
-- **GET** `/api/tasks?status=PENDING`
-- **Response**:
-```json
-{
-  "code": 200,
-  "data": [
+  ```json
+  [
     {
-      "groupId": 101,
-      "categoryLarge": "网络问题",
-      "categorySub": "组网协议异常",
-      "aiSummary": "用户反馈连接中断...",
-      "spdt": "分组A",
-      "ipmt": "XX",
-      "issueCount": 2,
-      "items": [
-        {
-          "issueId": 1001,
-          "prodEnName": "DSP9800",
-          "issueDetails": "Error 0x88F...",
-          "correctionStatus": "VERIFIED",
-          "humanCategoryLarge": null,
-          "humanCategorySub": null,
-          "humanReasoning": null
-        },
-        {
-          "issueId": 1002,
-          "prodEnName": "DSP9811",
-          "issueDetails": "Resource alloc failed...",
-          "correctionStatus": "CORRECTED",
-          "humanCategoryLarge": "硬件问题",
-          "humanCategorySub": "内存溢出",
-          "humanReasoning": "日志显示物理损坏"
-        }
-      ]
+      "id": 10,
+      "username": "guest_01",
+      "role": "GUEST",
+      "created_at": "2023-10-01T10:00:00Z",
+      "target_approver_id": 1 // 用于高亮“待我审批”
     }
   ]
-}
-```
+  ```
 
-### 9.4 提交校验 (User)
-- **POST** `/api/tasks/{taskId}/verify`
-- **Request**:
-```json
-{
-  "correction_status": "CORRECTED", // 或 VERIFIED
-  "human_category_large": "软件问题", 
-  "human_category_sub": "代码异常",
-  "human_reasoning": "The issue mentions database connection..." // 可选
-}
-```
+#### 9.2.4 修改用户角色/状态 (Admin)
+- **PATCH** `/api/admin/users/{userId}`
+- **Summary**: 审批用户（升级角色）或禁用用户。
+- **Request Body**:
+  ```json
+  {
+    "role": "USER", // Optional: GUEST -> USER
+    "status": "ACTIVE" // Optional
+  }
+  ```
 
-### 9.6 仪表盘统计 (Dashboard)
-#### 9.6.1 全局统计 (Admin)
-- **GET** `/api/admin/dashboard/stats`
+### 9.3 批次管理 (Batch Management)
+*Requires Role: ADMIN*
+
+#### 9.3.1 上传预测结果
+- **POST** `/api/admin/batches`
+- **Summary**: 上传 JSON 文件，创建新批次。
+- **Content-Type**: `multipart/form-data`
+- **Form Data**: `file`: (Binary JSON File)
 - **Response**:
-```json
-{
-  "total_predicted": 10000,
-  "accuracy": 0.85, 
-  "pending_batches": 2,
-  "pending_user_requests": 3, // 新增：待我审批的用户数
-  "correction_progress": 0.60,
-  "top_errors": [
-    {"category": "Billing", "value": 150},
-    {"category": "Login", "value": 120}
-  ],
-  "word_cloud": [
-    {"name": "Billing", "value": 500},
-    {"name": "Account", "value": 300}
-  ]
-}
-```
+  ```json
+  {
+    "batch_id": 101,
+    "file_name": "log_2023.json",
+    "total_count": 500,
+    "status": "UPLOADED"
+  }
+  ```
 
-#### 9.6.2 个人统计 (User)
-- **GET** `/api/user/dashboard/stats`
+#### 9.3.2 获取批次列表
+- **GET** `/api/admin/batches`
+- **Summary**: 查看所有批次状态。
 - **Response**:
-```json
-{
-  "my_pending_tasks_count": 15,
-  "recent_tasks": [
-    { "batch_id": 101, "file_name": "log_01.json", "progress": 0.8 }
+  ```json
+  [
+    {
+      "id": 101,
+      "batch_no": "B-20231001",
+      "status": "UPLOADED",
+      "assignee": null,
+      "created_at": "..."
+    }
   ]
-}
-```
+  ```
 
-### 9.7 数据导出 (Admin)
+#### 9.3.3 任务分发
+- **POST** `/api/admin/batches/{batchId}/assign`
+- **Summary**: 将批次指派给指定用户。
+- **Request Body**:
+  ```json
+  {
+    "user_id": 5, // 指派给 User ID 5
+    "strategy": "ALL" // 目前仅支持整批分配
+  }
+  ```
+
+#### 9.3.4 导出真值数据
 - **GET** `/api/admin/batches/{batchId}/export`
-- **Response**: CSV/JSON File Download
+- **Summary**: 导出已校验的数据 (CSV/JSON)。
+- **Response**: File Download Stream.
+
+### 9.4 校验任务 (Verification Task)
+*Requires Role: USER*
+
+#### 9.4.1 获取我的任务列表
+- **GET** `/api/tasks`
+- **Summary**: 获取分配给当前用户的任务（按批次聚合）。
+- **Query Params**: `status=PENDING` (Optional)
+- **Response**:
+  ```json
+  {
+    "summary": { "pending_count": 12, "completed_count": 5 },
+    "tasks": [
+      {
+        "batch_id": 101,
+        "file_name": "log_2023.json",
+        "progress": 0.45,
+        "groups": [
+          {
+            "group_id": 1001,
+            "category_large": "Network",
+            "category_sub": "Timeout",
+            "summary": "Connection timeout...",
+            "items": [
+              {
+                "issue_id": 5001,
+                "prod_name": "Router-X",
+                "detail": "Error 503",
+                "status": "PENDING"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+  ```
+
+#### 9.4.2 提交单题校验
+- **POST** `/api/tasks/{issueId}/verify`
+- **Summary**: 提交单个问题的校验结果（准确/纠错）。
+- **Request Body**:
+  ```json
+  {
+    "status": "CORRECTED", // VERIFIED or CORRECTED
+    "human_category_large": "Hardware", // Required if CORRECTED
+    "human_category_sub": "Disk_Fail",  // Required if CORRECTED
+    "reason": "Log shows disk full error" // Optional
+  }
+  ```
+
+### 9.5 仪表盘统计 (Dashboard)
+
+#### 9.5.1 全局统计 (Admin)
+- **GET** `/api/admin/dashboard/stats`
+- **Summary**: 全局核心指标。
+- **Response**:
+  ```json
+  {
+    "total_predictions": 10000,
+    "accuracy": 0.85,
+    "pending_batches": 2,
+    "pending_user_requests": 3,
+    "top_errors": [{"category": "Billing", "value": 150}],
+    "word_cloud": [{"name": "Error", "value": 500}]
+  }
+  ```
+
+#### 9.5.2 个人统计 (User)
+- **GET** `/api/user/dashboard/stats`
+- **Summary**: 个人工作量统计。
+- **Response**:
+  ```json
+  {
+    "my_pending_count": 15,
+    "my_verified_count": 120,
+    "recent_activity": [...]
+  }
+  ```
 
 ## 10. 异常处理 (Error Handling)
 - **上传错误**：校验 JSON 格式，若格式非法返回 `400 Bad Request` 并提示具体行号。
