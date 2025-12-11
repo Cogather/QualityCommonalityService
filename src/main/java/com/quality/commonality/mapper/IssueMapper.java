@@ -11,10 +11,20 @@ import java.util.Map;
 @Mapper
 public interface IssueMapper extends BaseMapper<Issue> {
     
-    @Select("SELECT ai_category_large as name, COUNT(*) as value FROM issues WHERE status != 'PENDING' GROUP BY ai_category_large")
+    // 从ai_cluster_groups表获取类别统计（使用category_large和category_sub字段）
+    @Select("SELECT CONCAT(acg.category_large, ' > ', acg.category_sub) as name, COUNT(*) as value " +
+            "FROM issues i " +
+            "INNER JOIN ai_cluster_groups acg ON i.cluster_id = acg.id " +
+            "WHERE i.status != 'PENDING' " +
+            "GROUP BY acg.category_large, acg.category_sub")
     List<Map<String, Object>> selectCategoryStats();
     
-    @Select("SELECT ai_category_sub as name, COUNT(*) as value FROM issues WHERE status != 'PENDING' GROUP BY ai_category_sub ORDER BY value DESC LIMIT 5")
+    // 获取Top 5错误类别（基于人工修正的类别）
+    @Select("SELECT human_category_large as name, COUNT(*) as value " +
+            "FROM issues " +
+            "WHERE status = 'CORRECTED' AND human_category_large IS NOT NULL " +
+            "GROUP BY human_category_large " +
+            "ORDER BY value DESC LIMIT 5")
     List<Map<String, Object>> selectTopErrors();
 }
 

@@ -455,57 +455,104 @@ UC_Dispatch ..> UC_MyTasks : 产生任务
 | total_count | INT | 总问题数 |
 | created_at | DATETIME | 上传时间 |
 
-**3. ai_clusters_group (AI 聚类表)**
+**3. ai_cluster_groups (AI 聚类组表)**
 | Field | Type | Description |
 |---|---|---|
 | id | BIGINT | PK (自增主键) |
-| batch_id | BIGINT | FK -> analysis_batches.id (关联批次) |
-| spdt | VARCHAR | SPDT字段 |
-| ipmt | VARCHAR | IPMT字段 |
-| category_large | VARCHAR | AI 聚类大类 |
-| category_sub | VARCHAR | AI 聚类子类 |
-| ai_cluster_summary | TEXT | AI 聚类总结 |
+| batch_id | BIGINT | FK -> batches.id (关联批次) |
+| category_large | VARCHAR(100) | AI预测的大类（例如："网络问题"、"PCC解决方案"） |
+| category_sub | VARCHAR(100) | AI预测的子类（例如："连接超时"、"流程时序"） |
+| summary | TEXT | 聚类总结 |
 | problem_count | INT | 该组包含的问题数 |
+| created_at | DATETIME | 创建时间 |
 
-**4. raw_problems (原始问题与矫正表)**
+**说明：** `type` 字段（格式如"PCC解决方案/流程时序"）在解析时会自动拆分为 `category_large` 和 `category_sub` 两个字段，支持按"/"或">"分隔符分割。
+
+**4. issues (问题表)**
 | Field | Type | Description |
 |---|---|---|
 | id | BIGINT | PK (自增主键) |
-| cluster_id | BIGINT | FK -> ai_clusters_group.id (关联的聚类组ID) |
+| batch_id | BIGINT | FK -> batches.id (关联批次) |
+| cluster_id | BIGINT | FK -> ai_cluster_groups.id (关联的聚类组ID) |
+| problem_detail | TEXT | PROBLEM_DETAIL - 问题详情 |
+| resolution_detail | TEXT | RESOLUTION_DETAIL - 解决方案详情 |
+| issue_details | TEXT | ISSUE_DETAILS - 问题详细信息 |
+| issue_no | VARCHAR(100) | ISSUE_NO - 问题编号 |
+| prod_en_name | VARCHAR(255) | PROD_EN_NAME - 产品英文名称 |
+| human_category_large | VARCHAR(100) | 人工修正大类 |
+| human_category_sub | VARCHAR(100) | 人工修正子类 |
+| reason | TEXT | 纠错原因 |
+| status | VARCHAR(20) | 状态: PENDING, VERIFIED, CORRECTED |
+| operator_id | BIGINT | FK -> users.id (操作人ID) |
+| processed_at | DATETIME | 处理时间 |
 
-| prod_en_name | VARCHAR |  |
-| resolution_detail | TEXT |  |
-| issue_details | TEXT |  |
-| issue_no | VARCHAR |  |
-| issue_type | VARCHAR |  |
-
-| correction_status | ENUM | 'PENDING', 'CORRECTED', 'VERIFIED', 'SKIPPED' |
-| human_category_large | VARCHAR | 用户输入的矫正大类 |
-| human_category_sub | VARCHAR | 用户输入的矫正子类 |
-| human_reasoning | TEXT | 用户输入的矫正理由 |
-| operator_id | VARCHAR | FK -> users.username (操作人工号) |
-| updated_at | DATETIME | 更新时间 |
+**注意：** issues表只保留需要展示的5个字段（problem_detail, resolution_detail, issue_details, issue_no, prod_en_name），其他字段不会被存储。
 
 ### 7.3 索引策略
-- `analysis_batches(assigned_user_id, status)`: 加速用户查询待处理批次。
-- `ai_clusters_group(batch_id)`: 加速批次下聚类组的加载。
-- `raw_problems(cluster_id)`: 加速聚类下问题的加载。
-- `raw_problems(operator_id, correction_status)`: 统计用户工作量。
+- `batches(assignee_id, status)`: 加速用户查询待处理批次。
+- `ai_cluster_groups(batch_id)`: 加速批次下聚类组的加载。
+- `issues(cluster_id)`: 加速聚类下问题的加载。
+- `issues(operator_id, status)`: 统计用户工作量。
+- `issues(batch_id)`: 加速批次下问题的查询。
 
 ## 8. 数据模型 (Data Models)
 
 ### 输入文件格式 (JSON)
+
+输入文件是一个JSON数组，每个元素代表一个AI聚类组。
+
+**格式说明：**
+- `type`: AI预测的大类/子类（例如："PCC解决方案/流程时序"）
+- `summary`: 聚类总结，描述该聚类组的特征
+- `count`: 该聚类组中包含的问题数量
+- `details`: 问题详情数组，每个元素代表一个问题
+
+**问题详情字段（只保留以下字段用于展示）：**
+- `PROBLEM_DETAIL`: 问题详情
+- `RESOLUTION_DETAIL`: 解决方案详情
+- `ISSUE_DETAILS`: 问题详细信息
+- `ISSUE_NO`: 问题编号
+- `PROD_EN_NAME`: 产品英文名称
+
+**注意：** 其他字段（如 `TOTAL_FAULT_TYPE`, `ROOT_CAUSE`, `RESOLUTION_SUMMARY`, `ISSUE_TYPE` 等）不会被存储和展示。
+
 ```json
 [
   {
-    "RESOLUTION_SUMMARY": "Replaced the faulty component.",
-    "ROOT_CAUSE": "Defect-Huawei Product-Software",
-    "PROBLEM_DETAIL": "System crashed after update.",
-    "RESOLUTION_DETAIL": "Patched the kernel module.",
-    "ISSUE_DETAILS": "Error code 500 received.",
-    "TYPE": "Bug"
+    "type": "PCC解决方案/流程时序",
+    "summary": "聚类总结：主要涉及PCC解决方案中的流程时序问题，包括超时、顺序错误等",
+    "count": 2,
+    "details": [
+      {
+        "PROBLEM_DETAIL": "问题详细描述...",
+        "RESOLUTION_DETAIL": "解决方案详情...",
+        "ISSUE_DETAILS": "问题详细信息...",
+        "ISSUE_NO": "ISSUE-001",
+        "PROD_EN_NAME": "CloudUPCC"
+      },
+      {
+        "PROBLEM_DETAIL": "另一个问题描述...",
+        "RESOLUTION_DETAIL": "另一个解决方案...",
+        "ISSUE_DETAILS": "另一个问题详细信息...",
+        "ISSUE_NO": "ISSUE-002",
+        "PROD_EN_NAME": "CloudUPCC"
+      }
+    ]
   },
-  ...
+  {
+    "type": "网络连接/超时",
+    "summary": "聚类总结：网络连接超时相关问题",
+    "count": 1,
+    "details": [
+      {
+        "PROBLEM_DETAIL": "网络连接超时问题...",
+        "RESOLUTION_DETAIL": "增加超时时间配置...",
+        "ISSUE_DETAILS": "详细错误信息...",
+        "ISSUE_NO": "ISSUE-003",
+        "PROD_EN_NAME": "CloudUPCC"
+      }
+    ]
+  }
 ]
 ```
 
@@ -614,17 +661,29 @@ UC_Dispatch ..> UC_MyTasks : 产生任务
 *Requires Role: ADMIN*
 
 #### 9.3.1 上传预测结果
-- **POST** `/api/admin/batches`
-- **Summary**: 上传 JSON 文件，创建新批次。
+- **POST** `/api/batches/upload`
+- **Summary**: 上传 JSON 文件，创建新批次。文件格式需符合第8节定义的输入文件格式。
 - **Content-Type**: `multipart/form-data`
-- **Form Data**: `file`: (Binary JSON File)
-- **Response**:
+- **Form Data**: `file`: (Binary JSON File，必须是.json文件)
+- **Response (200 OK)**:
   ```json
   {
-    "batch_id": 101,
-    "file_name": "log_2023.json",
-    "total_count": 500,
-    "status": "UPLOADED"
+    "code": 200,
+    "message": "success",
+    "data": {
+      "batch_id": 101,
+      "file_name": "log_2023.json",
+      "total_count": 500,
+      "status": "PENDING",
+      "batch_uid": "B-20231001-001"
+    }
+  }
+  ```
+- **Error Response (400)**:
+  ```json
+  {
+    "code": 400,
+    "message": "文件不能为空" 或 "只支持JSON文件" 或 "上传失败: [具体错误信息]"
   }
   ```
 
@@ -697,18 +756,73 @@ UC_Dispatch ..> UC_MyTasks : 产生任务
   }
   ```
 
-#### 9.4.2 提交单题校验
-- **POST** `/api/tasks/{issueId}/verify`
-- **Summary**: 提交单个问题的校验结果（准确/纠错）。
+#### 9.4.2 获取批次任务详情（按聚类组分组）
+- **GET** `/api/tasks/{batchId}`
+- **Summary**: 获取指定批次的任务详情，按聚类组分组返回。每个聚类组包含其下的所有问题。
+- **Response (200 OK)**:
+  ```json
+  [
+    {
+      "clusterId": 1001,
+      "categoryLarge": "网络问题",
+      "categorySub": "连接超时",
+      "summary": "网络连接超时,日志显示多次...",
+      "problemCount": 2,
+      "issues": [
+        {
+          "id": 5001,
+          "problemDetail": "问题详细描述...",
+          "resolutionDetail": "解决方案详情...",
+          "issueDetails": "问题详细信息...",
+          "issueNo": "ISSUE-001",
+          "prodEnName": "CloudUPCC",
+          "status": "PENDING",
+          "humanCategoryLarge": null,
+          "humanCategorySub": null,
+          "reason": null
+        },
+        {
+          "id": 5002,
+          "problemDetail": "另一个问题描述...",
+          "resolutionDetail": "另一个解决方案...",
+          "issueDetails": "另一个问题详细信息...",
+          "issueNo": "ISSUE-002",
+          "prodEnName": "CloudUPCC",
+          "status": "VERIFIED",
+          "humanCategoryLarge": null,
+          "humanCategorySub": null,
+          "reason": null
+        }
+      ]
+    },
+    {
+      "clusterId": 1002,
+      "categoryLarge": "PCC解决方案",
+      "categorySub": "流程时序",
+      "summary": "聚类总结：主要涉及PCC解决方案中的流程时序问题",
+      "problemCount": 1,
+      "issues": [...]
+    }
+  ]
+  ```
+
+#### 9.4.3 提交单题校验
+- **POST** `/api/tasks/items/{itemId}/verify`
+- **Summary**: 标记问题为准确（AI预测正确）。
+- **Response**: `{ "code": 200, "message": "success", "data": "Verified" }`
+
+#### 9.4.4 提交纠错
+- **POST** `/api/tasks/items/{itemId}/correct`
+- **Summary**: 提交单个问题的纠错结果（AI预测错误，需要人工修正）。
 - **Request Body**:
   ```json
   {
-    "status": "CORRECTED", // VERIFIED or CORRECTED
-    "human_category_large": "Hardware", // Required if CORRECTED
-    "human_category_sub": "Disk_Fail",  // Required if CORRECTED
-    "reason": "Log shows disk full error" // Optional
+    "categoryLarge": "Hardware", // 人工修正大类
+    "categorySub": "Disk_Fail",  // 人工修正子类
+    "reason": "Log shows disk full error" // 纠错原因（可选）
   }
   ```
+- **Response**: `{ "code": 200, "message": "success", "data": "Correction submitted" }`
 
 ### 9.5 仪表盘统计 (Dashboard)
 

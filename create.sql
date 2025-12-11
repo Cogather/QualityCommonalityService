@@ -20,28 +20,46 @@ CREATE TABLE IF NOT EXISTS `batches` (
   UNIQUE KEY `uk_batch_uid` (`batch_uid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='批次任务表';
 
+-- AI聚类组表
+CREATE TABLE IF NOT EXISTS `ai_cluster_groups` (
+  `id` BIGINT AUTO_INCREMENT COMMENT '主键ID',
+  `batch_id` BIGINT NOT NULL COMMENT '关联批次ID',
+  `category_large` VARCHAR(100) NOT NULL COMMENT 'AI预测的大类（如：网络问题）',
+  `category_sub` VARCHAR(100) NOT NULL COMMENT 'AI预测的子类（如：连接超时）',
+  `summary` TEXT COMMENT '聚类总结',
+  `problem_count` INT DEFAULT 0 COMMENT '该组包含的问题数',
+  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_batch_id` (`batch_id`),
+  KEY `idx_category` (`category_large`, `category_sub`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI聚类组表';
+
+-- 问题表（只保留需要展示的字段：PROBLEM_DETAIL, RESOLUTION_DETAIL, ISSUE_DETAILS, ISSUE_NO, PROD_EN_NAME）
 CREATE TABLE IF NOT EXISTS `issues` (
   `id` BIGINT AUTO_INCREMENT COMMENT '主键ID',
   `batch_id` BIGINT NOT NULL COMMENT '关联批次ID',
-  `title` VARCHAR(255) DEFAULT NULL COMMENT '问题标题/PROD_EN_NAME',
-  `description` TEXT COMMENT '问题描述/ISSUE_DETAILS',
-  `resolution` TEXT COMMENT '解决详情/RESOLUTION_DETAIL',
-  `issue_type` VARCHAR(100) DEFAULT NULL COMMENT '问题类型',
-  `spdt` VARCHAR(100) DEFAULT NULL COMMENT 'SPDT分组',
-  `ipmt` VARCHAR(100) DEFAULT NULL COMMENT 'IPMT分组',
+  `cluster_id` BIGINT NOT NULL COMMENT '关联AI聚类组ID',
+  `problem_detail` TEXT COMMENT 'PROBLEM_DETAIL - 问题详情',
+  `resolution_detail` TEXT COMMENT 'RESOLUTION_DETAIL - 解决方案详情',
+  `issue_details` TEXT COMMENT 'ISSUE_DETAILS - 问题详细信息',
+  `issue_no` VARCHAR(100) DEFAULT NULL COMMENT 'ISSUE_NO - 问题编号',
+  `prod_en_name` VARCHAR(255) DEFAULT NULL COMMENT 'PROD_EN_NAME - 产品英文名称',
   
-  `ai_category_large` VARCHAR(100) DEFAULT NULL COMMENT 'AI预测大类',
-  `ai_category_sub` VARCHAR(100) DEFAULT NULL COMMENT 'AI预测子类',
-  
-  `human_category_large` VARCHAR(100) DEFAULT NULL COMMENT '人工修正大类',
-  `human_category_sub` VARCHAR(100) DEFAULT NULL COMMENT '人工修正子类',
-  `reason` TEXT COMMENT '纠错原因',
+  `human_category_large` VARCHAR(100) DEFAULT NULL COMMENT '实际大类（VERIFIED/PENDING用AI预测，CORRECTED用人工修正）',
+  `human_category_sub` VARCHAR(100) DEFAULT NULL COMMENT '实际子类（VERIFIED/PENDING用AI预测，CORRECTED用人工修正）',
+  `reason` TEXT COMMENT '纠错原因（仅在CORRECTED状态时有值）',
   
   `status` VARCHAR(20) DEFAULT 'PENDING' COMMENT '状态: PENDING, VERIFIED, CORRECTED',
+  `operator_id` BIGINT DEFAULT NULL COMMENT '操作人ID',
   `processed_at` DATETIME DEFAULT NULL COMMENT '处理时间',
   
   PRIMARY KEY (`id`),
-  KEY `idx_batch_id` (`batch_id`)
+  KEY `idx_batch_id` (`batch_id`),
+  KEY `idx_cluster_id` (`cluster_id`),
+  KEY `idx_operator_id` (`operator_id`, `status`),
+  -- 优化筛选和导出查询：按human_category字段筛选（所有状态都使用此字段）
+  KEY `idx_human_category` (`human_category_large`, `human_category_sub`),
+  KEY `idx_status_human_category` (`status`, `human_category_large`, `human_category_sub`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='具体问题项表';
 
 CREATE TABLE IF NOT EXISTS `access_requests` (
