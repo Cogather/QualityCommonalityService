@@ -407,6 +407,7 @@ UC_Dispatch ..> UC_MyTasks : 产生任务
 ## 6. 技术栈选型 (Technology Stack Selection)
 
 ### 6.1 前端技术 (Frontend)
+- **node**： v24.11.1
 - **核心框架**: Vue 3
 - **构建工具**: Vite
 - **UI 组件库**: Element Plus
