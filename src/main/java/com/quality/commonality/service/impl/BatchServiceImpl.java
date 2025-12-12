@@ -212,7 +212,8 @@ public class BatchServiceImpl extends ServiceImpl<BatchMapper, Batch> implements
     @Override
     public List<User> getAssignableUsers() {
         QueryWrapper<User> qw = new QueryWrapper<>();
-        qw.eq("role", "USER");
+        // 允许普通用户和管理员都可被分发任务
+        qw.in("role", "USER", "ADMIN");
         // 注意：users表中没有status字段，只按role筛选
         return userMapper.selectList(qw);
     }
