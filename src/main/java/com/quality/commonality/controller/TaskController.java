@@ -2,12 +2,14 @@ package com.quality.commonality.controller;
 
 import com.quality.commonality.common.Result;
 import com.quality.commonality.service.TaskService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/tasks")
 @CrossOrigin(origins = "*")
@@ -36,9 +38,14 @@ public class TaskController {
     public Result<String> verifyItem(
             @PathVariable Long itemId,
             @RequestParam(required = false, defaultValue = "1") Long userId) {
-        // In real app use security context to get current user
-        taskService.verifyIssue(itemId, userId);
-        return Result.success("Verified");
+        log.info("Verifying item: {} by user: {}", itemId, userId);
+        try {
+            taskService.verifyIssue(itemId, userId);
+            return Result.success("Verified");
+        } catch (Exception e) {
+            log.error("Failed to verify item: {}", itemId, e);
+            return Result.error(e.getMessage());
+        }
     }
 
     @PostMapping("/items/{itemId}/correct")
@@ -46,9 +53,14 @@ public class TaskController {
             @PathVariable Long itemId,
             @RequestBody Map<String, String> data,
             @RequestParam(required = false, defaultValue = "1") Long userId) {
-        // In real app use security context to get current user
-        taskService.correctIssue(itemId, data, userId);
-        return Result.success("Correction submitted");
+        log.info("Correcting item: {} by user: {}", itemId, userId);
+        try {
+            taskService.correctIssue(itemId, data, userId);
+            return Result.success("Correction submitted");
+        } catch (Exception e) {
+            log.error("Failed to correct item: {}", itemId, e);
+            return Result.error(e.getMessage());
+        }
     }
 }
 

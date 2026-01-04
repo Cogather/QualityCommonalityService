@@ -2,6 +2,8 @@ server:
   port: 8080
 
 spring:
+  profiles:
+    active: dev
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: jdbc:mysql://localhost:3306/corecode_ai_keman?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai
@@ -24,4 +26,14 @@ mybatis-plus:
 jwt:
   secret: quality_commonality_secret_key_123456
   expiration: 86400000
+
+logging:
+  level:
+    root: INFO
+    com.quality.commonality: DEBUG
+  file:
+    name: logs/application.log
+  pattern:
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
 

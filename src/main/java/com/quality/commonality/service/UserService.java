@@ -22,4 +22,13 @@ public interface UserService extends IService<User> {
      * 查询用户列表，可选按角色过滤
      */
     List<User> listUsers(String role);
+
+    /**
+     * 根据用户名查找用户，如果不存在则创建新用户（角色为 GUEST）
+     * @param username 用户名
+     * @return 用户信息
+     */
+    User getOrCreateByUsername(String username);
+
+    void updateUserRole(Long userId, String role);
 }

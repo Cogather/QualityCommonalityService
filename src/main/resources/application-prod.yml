@@ -1,0 +1,7 @@
+logging:
+  level:
+    root: WARN
+    com.quality.commonality: INFO
+  file:
+    name: logs/application-prod.log
+

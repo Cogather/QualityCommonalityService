@@ -1,0 +1,7 @@
+logging:
+  level:
+    root: INFO
+    com.quality.commonality: DEBUG
+  file:
+    name: logs/application-dev.log
+
